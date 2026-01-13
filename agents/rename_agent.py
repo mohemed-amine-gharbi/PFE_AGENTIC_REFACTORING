@@ -1,26 +1,25 @@
-# agents/rename_agent.py
+from agents.base_agent import BaseAgent
 import ast
-from agents.llm_agent import LLMAgent
 
-class RenameAgent(LLMAgent):
-    def __init__(self):
-        super().__init__("Rename Agent")
+class RenameAgent(BaseAgent):
+    def __init__(self, llm):
+        super().__init__("RenameAgent", llm)
 
     def analyze(self, code):
         tree = ast.parse(code)
-        bad_names = []
+        results = []
 
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and len(node.name) <= 2:
-                bad_names.append(node.name)
+            if isinstance(node, ast.FunctionDef):
+                # Détecte les noms trop courts ou peu explicites
+                if len(node.name) <= 2:
+                    results.append(node.name)
+        return results
 
-        prompt = f"""
-Tu es un expert en refactoring Python.
-Propose des noms clairs pour ces fonctions : {bad_names}
-Code :
-{code}
+    def build_prompt(self, analysis):
+        return f"""
+Detected poorly named functions:
+{analysis}
+
+Suggest more meaningful names.
 """
-        return {
-            "bad_names": bad_names,
-            "suggestions": self.reason(prompt)
-        }

@@ -1,27 +1,28 @@
-# agents/long_function_agent.py
+from agents.base_agent import BaseAgent
 import ast
-from agents.llm_agent import LLMAgent
 
-class LongFunctionAgent(LLMAgent):
-    def __init__(self):
-        super().__init__("Long Function Agent")
+class LongFunctionAgent(BaseAgent):
+    def __init__(self, llm):
+        super().__init__("LongFunctionAgent", llm)
 
     def analyze(self, code):
         tree = ast.parse(code)
-        long_funcs = []
+        results = []
 
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
-                if (node.end_lineno - node.lineno) > 20:
-                    long_funcs.append(node.name)
+                lines = node.body
+                if len(lines) > 10:  # fonction trop longue
+                    results.append({
+                        "function": node.name,
+                        "lines": len(lines)
+                    })
+        return results
 
-        prompt = f"""
-Ces fonctions sont trop longues : {long_funcs}
-Propose un découpage logique en sous-fonctions.
-Code :
-{code}
+    def build_prompt(self, analysis):
+        return f"""
+Detected long functions:
+{analysis}
+
+Suggest a strategy to break them into smaller functions.
 """
-        return {
-            "long_functions": long_funcs,
-            "refactor": self.reason(prompt)
-        }

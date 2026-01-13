@@ -1,13 +1,11 @@
-# main.py
-from orchestrator import Orchestrator
-from diagnostic_report import generate_report
+from core.orchestrator import Orchestrator
+from diagnostics.report import DiagnosticReport
 
-with open("sample_code/bad_code.py", encoding="utf-8") as f:
+with open("examples/bad_code.py") as f:
     code = f.read()
 
-orch = Orchestrator()
-report = orch.run(code)
+orchestrator = Orchestrator()
+results = orchestrator.run(code)
 
-generate_report(report)
-
-print("✅ Analyse terminée. Rapport généré dans reports/diagnostic.json")
+report = DiagnosticReport(results)
+report.display()

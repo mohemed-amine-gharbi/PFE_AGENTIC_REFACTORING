@@ -1,17 +1,21 @@
-# agents/duplication_agent.py
-from agents.llm_agent import LLMAgent
+from agents.base_agent import BaseAgent
 
-class DuplicationAgent(LLMAgent):
-    def __init__(self):
-        super().__init__("Duplication Agent")
+class DuplicationAgent(BaseAgent):
+    def __init__(self, llm):
+        super().__init__("DuplicationAgent", llm)
 
     def analyze(self, code):
-        prompt = f"""
-Détecte toute duplication logique dans ce code Python.
-Explique le problème et propose une factorisation.
-Code :
-{code}
+        lines = code.splitlines()
+        duplicates = [
+            line for line in set(lines)
+            if lines.count(line) > 1 and line.strip()
+        ]
+        return duplicates
+
+    def build_prompt(self, analysis):
+        return f"""
+Detected duplicated code lines:
+{analysis}
+
+Suggest a refactoring strategy.
 """
-        return {
-            "duplication_analysis": self.reason(prompt)
-        }

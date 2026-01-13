@@ -1,21 +1,27 @@
-# agents/import_agent.py
+from agents.base_agent import BaseAgent
 import ast
-from agents.llm_agent import LLMAgent
 
-class ImportAgent(LLMAgent):
-    def __init__(self):
-        super().__init__("Import Agent")
+class ImportAgent(BaseAgent):
+    def __init__(self, llm):
+        super().__init__("ImportAgent", llm)
 
     def analyze(self, code):
         tree = ast.parse(code)
-        imports = [ast.unparse(n) for n in ast.walk(tree)
-                   if isinstance(n, (ast.Import, ast.ImportFrom))]
+        imports = []
 
-        prompt = f"""
-Analyse les imports suivants et indique ceux qui sont inutiles ou dupliqués :
-{imports}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for name in node.names:
+                    imports.append(name.name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    imports.append(node.module)
+        return imports
+
+    def build_prompt(self, analysis):
+        return f"""
+Detected imports in the code:
+{analysis}
+
+Suggest which imports are unnecessary or could be simplified.
 """
-        return {
-            "imports": imports,
-            "analysis": self.reason(prompt)
-        }
