@@ -1,27 +1,9 @@
-from agents.base_agent import BaseAgent
-import ast
-
-class ImportAgent(BaseAgent):
+class ImportAgent:
     def __init__(self, llm):
-        super().__init__("ImportAgent", llm)
+        self.llm = llm
+        self.prompt = "Remove duplicate or unused imports in Python"
 
     def analyze(self, code):
-        tree = ast.parse(code)
-        imports = []
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for name in node.names:
-                    imports.append(name.name)
-            elif isinstance(node, ast.ImportFrom):
-                if node.module:
-                    imports.append(node.module)
-        return imports
-
-    def build_prompt(self, analysis):
-        return f"""
-Detected imports in the code:
-{analysis}
-
-Suggest which imports are unnecessary or could be simplified.
-"""
+        imports = [line.strip() for line in code.splitlines() if line.strip().startswith("import")]
+        duplicates = [imp for imp in set(imports) if imports.count(imp) > 1]
+        return duplicates

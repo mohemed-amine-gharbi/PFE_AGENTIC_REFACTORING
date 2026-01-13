@@ -3,11 +3,11 @@ from agents.duplication_agent import DuplicationAgent
 from agents.import_agent import ImportAgent
 from agents.long_function_agent import LongFunctionAgent
 from agents.rename_agent import RenameAgent
-from core.llm_client import LLMClient
+from core.ollama_llm_client import OllamaLLMClient
 
 class Orchestrator:
     def __init__(self):
-        llm = LLMClient()
+        llm = OllamaLLMClient(model_name="mistral:latest")
         self.agents = [
             ComplexityAgent(llm),
             DuplicationAgent(llm),
@@ -17,12 +17,12 @@ class Orchestrator:
         ]
 
     def run(self, code):
-        full_report = {}
+        report = {}
         for agent in self.agents:
             analysis = agent.analyze(code)
-            llm_response = agent.reason_with_llm(analysis)
-            full_report[agent.name] = {
-                "analysis": analysis,
-                "llm_proposal": llm_response
+            llm_response = agent.llm.ask(agent.prompt, "\n".join(analysis))
+            report[agent.__class__.__name__] = {
+                "Analysis": analysis,
+                "LLM Proposal": llm_response
             }
-        return full_report
+        return report

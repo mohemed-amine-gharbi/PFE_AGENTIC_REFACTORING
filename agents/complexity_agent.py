@@ -1,31 +1,9 @@
-import ast
-from agents.base_agent import BaseAgent
-
-class ComplexityAgent(BaseAgent):
+class ComplexityAgent:
     def __init__(self, llm):
-        super().__init__("ComplexityAgent", llm)
+        self.llm = llm
+        self.prompt = "Refactor nested conditions in Python code"
 
     def analyze(self, code):
-        tree = ast.parse(code)
-        results = []
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                complexity = sum(
-                    isinstance(n, (ast.If, ast.For, ast.While))
-                    for n in ast.walk(node)
-                )
-                if complexity > 4:
-                    results.append({
-                        "function": node.name,
-                        "complexity": complexity
-                    })
-        return results
-
-    def build_prompt(self, analysis):
-        return f"""
-The following functions have high cyclomatic complexity:
-{analysis}
-
-Explain how to refactor them.
-"""
+        # Détecte les conditions imbriquées
+        nested = [line.strip() for line in code.splitlines() if line.strip().startswith("if")]
+        return nested
