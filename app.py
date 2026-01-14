@@ -3,7 +3,7 @@ import streamlit as st
 import traceback
 from core.orchestrator import Orchestrator
 
-# Config page
+# --- Configuration de la page ---
 st.set_page_config(page_title="Agentic IA Refactoring", layout="wide")
 st.title("🛠 Agentic IA Refactoring")
 st.markdown("""
@@ -11,7 +11,7 @@ Interface web pour le projet **Agentic IA Refactoring**.
 Chargez un fichier Python et laissez les agents IA analyser et proposer un refactoring dynamique.
 """)
 
-# Upload du fichier Python
+# --- Upload du fichier Python ---
 uploaded_file = st.file_uploader("📂 Sélectionnez un fichier Python à refactorer", type=["py"])
 
 if uploaded_file:
@@ -23,61 +23,39 @@ if uploaded_file:
     if st.button("🚀 Lancer le refactoring"):
         st.info("Analyse en cours... Patientez...")
         try:
+            # --- Initialisation de l'orchestrator ---
             orchestrator = Orchestrator()
-            results = orchestrator.run(code)  # appel standard
-
-            # --- Récupération sécurisée du code refactoré ---
-            refactored_code = code  # fallback
-            if isinstance(results, list) and len(results) > 0:
-                last_item = results[-1]
-                if isinstance(last_item, dict):
-                    refactored_code = last_item.get("proposal", code)
-                elif isinstance(last_item, (tuple, list)) and len(last_item) >= 3:
-                    refactored_code = last_item[2]
-                else:
-                    # dernier item mais format inattendu
-                    refactored_code = str(last_item)
+            results, refactored_code = orchestrator.run(code)  # retourne report et code final
 
             st.success("✅ Refactoring terminé !")
 
             # --- Rapport détaillé ---
             st.subheader("📊 Rapport Agentic")
-            if isinstance(results, list) and len(results) > 0:
+            if results and isinstance(results, list):
                 for idx, item in enumerate(results):
-                    agent_name = f"Agent {idx+1}"
-                    analysis = []
-                    proposal = ""
-
-                    if isinstance(item, dict):
-                        agent_name = item.get("name", agent_name)
-                        analysis = item.get("analysis", [])
-                        proposal = item.get("proposal", "")
-                    elif isinstance(item, (tuple, list)):
-                        if len(item) >= 1:
-                            agent_name = str(item[0])
-                        if len(item) >= 2:
-                            analysis = item[1]
-                        if len(item) >= 3:
-                            proposal = item[2]
-                    else:
-                        proposal = str(item)
+                    agent_name = item.get("agent", f"Agent {idx+1}")
+                    analysis = item.get("analysis", [])
+                    changed = item.get("changed", False)
+                    code_after = item.get("code", "")
 
                     with st.expander(agent_name):
                         st.write("**Analyse:**")
-                        st.code("\n".join(analysis) if isinstance(analysis, list) and analysis else "Aucun problème détecté")
-                        st.write("**Proposition LLM:**")
-                        st.code(proposal)
+                        st.code("\n".join(analysis) if analysis else "Aucun problème détecté")
+                        st.write("**Modification effectuée:**", "✅ Oui" if changed else "❌ Non")
+                        st.write("**Code après agent:**")
+                        st.code(code_after)
+
             else:
-                st.info("Aucun résultat généré par les agents.")
+                st.info("Tous les agents ont analysé le code mais aucune modification n'a été effectuée.")
 
             # --- Code original et refactoré côte à côte ---
-            st.subheader("📝 Code refactoré")
+            st.subheader("📝 Comparaison Code original / Refactoré")
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("**Code original**")
                 st.code(code, language="python")
             with col2:
-                st.markdown("**Code refactoré**")
+                st.markdown("**Code refactoré final**")
                 st.code(refactored_code, language="python")
                 st.download_button(
                     "💾 Télécharger le code refactoré",

@@ -1,15 +1,21 @@
 class ComplexityAgent:
     def __init__(self, llm):
         self.llm = llm
-        self.name = "ComplexityAgent"
 
     def analyze(self, code):
-        # Détecte les conditions imbriquées
-        nested = [line.strip() for line in code.splitlines() if line.strip().startswith("if")]
-        return nested
+        return [line for line in code.splitlines() if line.strip().startswith("if")]
 
-    def prompt(self, analysis):
-        # Retourne un texte complet pour le LLM
-        if not analysis:
-            return "Aucune condition imbriquée détectée."
-        return f"Refactor these nested conditions in Python code:\n{chr(10).join(analysis)}"
+    def prompt(self, analysis, code):
+        if len(analysis) < 2:
+            return code
+
+        return f"""
+You are a Python refactoring agent.
+
+Reduce cyclomatic complexity by refactoring nested conditions
+into helper functions.
+Return ONLY the refactored Python code.
+
+CODE:
+{code}
+"""

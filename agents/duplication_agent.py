@@ -1,21 +1,27 @@
-# agents/duplication_agent.py
 class DuplicationAgent:
     def __init__(self, llm):
         self.llm = llm
-        self.name = "DuplicationAgent"
 
     def analyze(self, code):
         lines = code.splitlines()
-        duplicates = []
+        duplicated_blocks = []
         seen = set()
         for line in lines:
-            if line.strip() in seen:
-                duplicates.append(line.strip())
-            else:
-                seen.add(line.strip())
-        return duplicates
+            if line.strip() and line in seen:
+                duplicated_blocks.append(line)
+            seen.add(line)
+        return duplicated_blocks
 
-    def prompt(self, analysis):
+    def prompt(self, analysis, code):
         if not analysis:
-            return "No duplicated code detected."
-        return f"Refactor the following duplicated lines in Python:\n{chr(10).join(analysis)}"
+            return code
+
+        return f"""
+You are a Python refactoring agent.
+
+Extract duplicated logic into reusable functions.
+Return ONLY the refactored Python code.
+
+CODE:
+{code}
+"""
