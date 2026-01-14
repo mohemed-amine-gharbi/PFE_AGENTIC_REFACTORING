@@ -7,7 +7,10 @@ from core.ollama_llm_client import OllamaLLMClient
 
 class Orchestrator:
     def __init__(self):
-        llm = OllamaLLMClient(model_name="mistral:latest")
+        # Crée le client LLM
+        llm = OllamaLLMClient(model_name="mistral")
+
+        # Initialise tous les agents avec le client LLM
         self.agents = [
             ComplexityAgent(llm),
             DuplicationAgent(llm),
@@ -17,12 +20,11 @@ class Orchestrator:
         ]
 
     def run(self, code):
-        report = {}
+        results = []
         for agent in self.agents:
             analysis = agent.analyze(code)
-            llm_response = agent.llm.ask(agent.prompt, "\n".join(analysis))
-            report[agent.__class__.__name__] = {
-                "Analysis": analysis,
-                "LLM Proposal": llm_response
-            }
-        return report
+            prompt_text = agent.prompt(analysis)  # <-- méthode maintenant
+            llm_response = agent.llm.ask(prompt_text)
+            results.append((agent.name, analysis, llm_response))
+        return results
+

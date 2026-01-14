@@ -1,10 +1,21 @@
+# agents/duplication_agent.py
 class DuplicationAgent:
     def __init__(self, llm):
         self.llm = llm
-        self.prompt = "Refactor duplicated code in Python"
+        self.name = "DuplicationAgent"
 
     def analyze(self, code):
-        # Détecte des lignes identiques
-        lines = [line.strip() for line in code.splitlines() if line.strip()]
-        duplicates = [line for line in lines if lines.count(line) > 1]
-        return list(set(duplicates))
+        lines = code.splitlines()
+        duplicates = []
+        seen = set()
+        for line in lines:
+            if line.strip() in seen:
+                duplicates.append(line.strip())
+            else:
+                seen.add(line.strip())
+        return duplicates
+
+    def prompt(self, analysis):
+        if not analysis:
+            return "No duplicated code detected."
+        return f"Refactor the following duplicated lines in Python:\n{chr(10).join(analysis)}"
