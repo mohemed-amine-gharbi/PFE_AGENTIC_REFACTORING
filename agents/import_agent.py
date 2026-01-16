@@ -1,34 +1,54 @@
-# agents/import_agent.py
-class ImportAgent:
+from agents.base_agent import BaseAgent
+
+class ImportAgent(BaseAgent):
     def __init__(self, llm):
-        self.llm = llm
+        super().__init__(llm)
+        self.name = "ImportAgent"
 
     def analyze(self, code):
-        import_lines = [
-            line.strip() for line in code.splitlines()
-            if line.strip().startswith("import")
-        ]
-
+        lines = code.splitlines()
+        imports_seen = {}
         duplicates = []
-        seen = set()
-        for imp in import_lines:
-            if imp in seen:
-                duplicates.append(imp)
-            else:
-                seen.add(imp)
+        unused = []
 
-        return duplicates
+        # Identifier tous les imports et doublons
+        for line in lines:
+            line_clean = line.strip()
+            if line_clean.startswith("import ") or line_clean.startswith("from "):
+                if line_clean in imports_seen:
+                    duplicates.append(line_clean)
+                else:
+                    imports_seen[line_clean] = True
 
-    def prompt(self, analysis, code):
-        if not analysis:
-            return code  # 🔒 aucun changement
+        # Identifier tous les imports inutilisés
+        for imp in imports_seen:
+            module_name = imp.split()[1] if len(imp.split()) > 1 else None
+            # Si le nom du module n'apparaît plus ailleurs dans le code
+            if module_name and module_name not in code.replace(imp, ""):
+                unused.append(imp)
 
-        return f"""
-You are a Python refactoring agent.
+        return {
+            "duplicates": duplicates,
+            "unused": unused
+        }
 
-Remove duplicated import statements.
-Return ONLY the corrected Python code.
+    def apply(self, code):
+        analysis = self.analyze(code)
+        lines = code.splitlines()
+        to_remove = set(analysis["duplicates"] + analysis["unused"])
+        new_lines = [line for line in lines if line.strip() not in to_remove]
 
-CODE:
-{code}
-"""
+        # Rapport clair pour tous les imports supprimés
+        report = []
+        if analysis["duplicates"]:
+            report.append("Duplicates removed: " + ", ".join(analysis["duplicates"]))
+        if analysis["unused"]:
+            report.append("Unused imports removed: " + ", ".join(analysis["unused"]))
+        if not report:
+            report.append("No duplicates or unused imports detected.")
+
+        return {
+            "name": self.name,
+            "analysis": report,
+            "proposal": "\n".join(new_lines)
+        }

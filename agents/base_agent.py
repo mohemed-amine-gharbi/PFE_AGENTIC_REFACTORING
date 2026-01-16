@@ -1,17 +1,20 @@
 class BaseAgent:
-    def __init__(self, name, llm_client):
-        self.name = name
-        self.llm = llm_client
+    def __init__(self, llm):
+        self.llm = llm
 
-    def analyze(self, code: str):
-        raise NotImplementedError
+    def analyze(self, code):
+        """À redéfinir dans chaque agent"""
+        return []
 
-    def build_prompt(self, analysis, code):
-        raise NotImplementedError
+    def prompt(self, analysis, code):
+        """À redéfinir dans chaque agent"""
+        return code
 
-    def reason_with_llm(self, analysis, code):
-        prompt = self.build_prompt(analysis, code)
-        return self.llm.ask(
-            system_prompt=f"You are a refactoring agent specialized in {self.name}.",
-            user_prompt=prompt
-        )
+    def apply(self, code):
+        analysis = self.analyze(code)
+        proposal = self.llm.ask(self.prompt_text, self.prompt(analysis, code))
+        return {
+            "name": self.__class__.__name__,
+            "analysis": analysis,
+            "proposal": proposal
+        }

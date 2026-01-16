@@ -1,27 +1,24 @@
-class DuplicationAgent:
+from agents.base_agent import BaseAgent
+
+class DuplicationAgent(BaseAgent):
     def __init__(self, llm):
         self.llm = llm
+        self.name = "DuplicationAgent"
 
     def analyze(self, code):
-        lines = code.splitlines()
-        duplicated_blocks = []
-        seen = set()
-        for line in lines:
-            if line.strip() and line in seen:
-                duplicated_blocks.append(line)
-            seen.add(line)
-        return duplicated_blocks
+        lines = [line.strip() for line in code.splitlines() if line.strip()]
+        duplicates = []
+        for i in range(len(lines)-2):
+            block = lines[i:i+3]
+            for j in range(i+1, len(lines)-2):
+                if block == lines[j:j+3]:
+                    duplicates.append("\n".join(block))
+        return list(set(duplicates))
 
-    def prompt(self, analysis, code):
-        if not analysis:
-            return code
-
-        return f"""
-You are a Python refactoring agent.
-
-Extract duplicated logic into reusable functions.
-Return ONLY the refactored Python code.
-
-CODE:
-{code}
-"""
+    def apply(self, code):
+        duplicates = self.analyze(code)
+        if duplicates:
+            proposal = f"# Attention: blocs dupliqués détectés\n" + code
+        else:
+            proposal = code
+        return {"name": self.name, "analysis": duplicates, "proposal": proposal}
