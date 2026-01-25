@@ -1,38 +1,37 @@
 from agents.base_agent import BaseAgent
+import re
 
 class LongFunctionAgent(BaseAgent):
-    def __init__(self, llm, max_lines=10):
-        self.llm = llm
-        self.name = "LongFunctionAgent"
-        self.max_lines = max_lines
+    """
+    Agent qui détecte les fonctions trop longues et propose des refactorings.
+    """
+    def __init__(self, llm):
+        super().__init__(llm, name="LongFunctionAgent")
 
-    def analyze(self, code):
-        lines = code.splitlines()
-        functions = []
-        current_func = []
-        inside_func = False
-        for line in lines:
-            if line.strip().startswith("def "):
-                if current_func:
-                    functions.append(current_func)
-                current_func = [line]
-                inside_func = True
-            elif inside_func:
-                if line.startswith(" ") or line.startswith("\t"):
-                    current_func.append(line)
-                else:
-                    functions.append(current_func)
-                    current_func = []
-                    inside_func = False
-        if current_func:
-            functions.append(current_func)
-        long_funcs = [f for f in functions if len(f) > self.max_lines]
-        return ["\n".join(f) for f in long_funcs]
+    def analyze(self, code, language):
+        if language == "Python":
+            functions = re.findall(r'def (\w+)\(.*\):', code)
+            long_functions = []
+            lines = code.splitlines()
+            for func in functions:
+                start = next((i for i, line in enumerate(lines) if f'def {func}' in line), None)
+                if start is not None:
+                    # On compte les lignes jusqu'à la prochaine fonction ou fin du code
+                    end = next((i for i, line in enumerate(lines[start+1:], start+start+1) if line.strip().startswith("def ")), len(lines))
+                    if end - start > 20:  # seuil de 20 lignes pour considérer "long"
+                        long_functions.append(func)
+            return long_functions
+        else:
+            return ["LLM long function analysis needed"]
 
-    def apply(self, code):
-        long_funcs = self.analyze(code)
-        if long_funcs:
-            proposal = f"# Attention: fonctions longues détectées\n" + code
+    def apply(self, code, language):
+        analysis = self.analyze(code, language)
+        if analysis:
+            prompt = (
+                f"Refactor the following {language} code. Functions {analysis} are too long. "
+                "Split them into smaller functions without changing behavior."
+            )
+            proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
         else:
             proposal = code
-        return {"name": self.name, "analysis": long_funcs, "proposal": proposal}
+        return {"name": self.name, "analysis": analysis, "proposal": proposal}

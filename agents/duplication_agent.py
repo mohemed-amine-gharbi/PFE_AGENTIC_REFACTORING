@@ -1,24 +1,25 @@
 from agents.base_agent import BaseAgent
 
 class DuplicationAgent(BaseAgent):
+    """
+    Agent qui détecte le code dupliqué et propose de le factoriser.
+    """
     def __init__(self, llm):
-        self.llm = llm
-        self.name = "DuplicationAgent"
+        super().__init__(llm, name="DuplicationAgent")
 
-    def analyze(self, code):
-        lines = [line.strip() for line in code.splitlines() if line.strip()]
-        duplicates = []
-        for i in range(len(lines)-2):
-            block = lines[i:i+3]
-            for j in range(i+1, len(lines)-2):
-                if block == lines[j:j+3]:
-                    duplicates.append("\n".join(block))
-        return list(set(duplicates))
+    def analyze(self, code, language):
+        # Ici, on laisse le LLM détecter les duplications complexes
+        prompt = (
+            f"Analyze the following {language} code and find duplicated code blocks "
+            "that can be refactored into functions or loops."
+        )
+        return [prompt]  # On retourne le prompt comme analyse initiale
 
-    def apply(self, code):
-        duplicates = self.analyze(code)
-        if duplicates:
-            proposal = f"# Attention: blocs dupliqués détectés\n" + code
-        else:
-            proposal = code
-        return {"name": self.name, "analysis": duplicates, "proposal": proposal}
+    def apply(self, code, language):
+        analysis = self.analyze(code, language)
+        prompt = (
+            f"Refactor the following {language} code by reducing duplication. "
+            "Keep functionality unchanged."
+        )
+        proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
+        return {"name": self.name, "analysis": analysis, "proposal": proposal}

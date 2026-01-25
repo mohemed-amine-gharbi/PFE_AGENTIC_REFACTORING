@@ -5,17 +5,23 @@ class ComplexityAgent(BaseAgent):
         self.llm = llm
         self.name = "ComplexityAgent"
 
-    def analyze(self, code):
-        nested_conditions = [line.strip() for line in code.splitlines() if line.strip().startswith("if")]
-        return nested_conditions
+    def build_prompt(self, code, language):
+        return (
+            f"Analyse ce code {language} et propose un refactoring pour réduire la complexité algorithmique. "
+            "Si possible, transforme les boucles imbriquées ou opérations coûteuses pour améliorer l'efficacité. "
+            "Retourne uniquement le code refactoré."
+        )
 
-    def apply(self, code):
+    def analyze(self, code):
+        # Analyse simplifiée: détecte les boucles imbriquées
+        nested_loops = [line for line in code.splitlines() if "for" in line or "while" in line]
+        return nested_loops
+
+    def apply(self, code, language):
         analysis = self.analyze(code)
         if analysis:
-            proposal = self.llm.ask(
-                "Refactor nested conditions in Python code for clarity",
-                "\n".join(code.splitlines())
-            )
+            prompt = self.build_prompt(code, language)
+            proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
         else:
             proposal = code
         return {"name": self.name, "analysis": analysis, "proposal": proposal}

@@ -1,54 +1,35 @@
 from agents.base_agent import BaseAgent
+import re
 
 class ImportAgent(BaseAgent):
+    """
+    Agent qui détecte et propose d'optimiser les imports inutilisés ou dupliqués.
+    """
     def __init__(self, llm):
-        super().__init__(llm)
-        self.name = "ImportAgent"
+        super().__init__(llm, name="ImportAgent")
 
-    def analyze(self, code):
-        lines = code.splitlines()
-        imports_seen = {}
-        duplicates = []
-        unused = []
+    def analyze(self, code, language):
+        if language == "Python":
+            imports = re.findall(r'^\s*(import .+|from .+ import .+)', code, flags=re.MULTILINE)
+            used_imports = []
+            for imp in imports:
+                name_match = re.findall(r'import (\w+)', imp)
+                for name in name_match:
+                    if name in code:
+                        used_imports.append(imp)
+            unused_imports = list(set(imports) - set(used_imports))
+            return unused_imports
+        else:
+            return ["LLM import analysis needed"]
 
-        # Identifier tous les imports et doublons
-        for line in lines:
-            line_clean = line.strip()
-            if line_clean.startswith("import ") or line_clean.startswith("from "):
-                if line_clean in imports_seen:
-                    duplicates.append(line_clean)
-                else:
-                    imports_seen[line_clean] = True
-
-        # Identifier tous les imports inutilisés
-        for imp in imports_seen:
-            module_name = imp.split()[1] if len(imp.split()) > 1 else None
-            # Si le nom du module n'apparaît plus ailleurs dans le code
-            if module_name and module_name not in code.replace(imp, ""):
-                unused.append(imp)
-
-        return {
-            "duplicates": duplicates,
-            "unused": unused
-        }
-
-    def apply(self, code):
-        analysis = self.analyze(code)
-        lines = code.splitlines()
-        to_remove = set(analysis["duplicates"] + analysis["unused"])
-        new_lines = [line for line in lines if line.strip() not in to_remove]
-
-        # Rapport clair pour tous les imports supprimés
-        report = []
-        if analysis["duplicates"]:
-            report.append("Duplicates removed: " + ", ".join(analysis["duplicates"]))
-        if analysis["unused"]:
-            report.append("Unused imports removed: " + ", ".join(analysis["unused"]))
-        if not report:
-            report.append("No duplicates or unused imports detected.")
-
-        return {
-            "name": self.name,
-            "analysis": report,
-            "proposal": "\n".join(new_lines)
-        }
+    def apply(self, code, language):
+        analysis = self.analyze(code, language)
+        if analysis:
+            prompt = (
+                f"Refactor the following {language} code by removing unused imports: {analysis}. "
+                "Keep functionality unchanged."
+            )
+            proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
+        else:
+            proposal = code
+        return {"name": self.name, "analysis": analysis, "proposal": proposal}

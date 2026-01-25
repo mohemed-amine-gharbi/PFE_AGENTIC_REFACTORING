@@ -1,30 +1,39 @@
+from agents.rename_agent import RenameAgent
 from agents.complexity_agent import ComplexityAgent
+from agents.merge_agent import MergeAgent
 from agents.duplication_agent import DuplicationAgent
 from agents.import_agent import ImportAgent
 from agents.long_function_agent import LongFunctionAgent
-from agents.rename_agent import RenameAgent
 
 class Orchestrator:
     def __init__(self, llm):
-        self.agents = [
-            ComplexityAgent(llm),
-            DuplicationAgent(llm),
-            ImportAgent(llm),
-            LongFunctionAgent(llm),
-            RenameAgent(llm)
-        ]
+        # Instanciation des agents
+        self.agent_instances = {
+            "RenameAgent": RenameAgent(llm),
+            "ComplexityAgent": ComplexityAgent(llm),
+            "DuplicationAgent": DuplicationAgent(llm),
+            "ImportAgent": ImportAgent(llm),
+            "LongFunctionAgent": LongFunctionAgent(llm),
+        }
+        self.merge_agent = MergeAgent(llm)
 
-    def run(self, code):
-        """
-        Retourne un rapport complet et le code final refactoré.
-        """
+    def run_parallel(self, code, selected_agent_names, language):
         results = []
-        current_code = code
 
-        for agent in self.agents:
-            result = agent.apply(current_code)
-            results.append(result)
-            # Chaque agent peut proposer une version du code
-            current_code = result.get("proposal", current_code)
+        for name in selected_agent_names:
+            agent = self.agent_instances.get(name)
+            if agent:
+                result = agent.apply(code, language=language)
+                results.append(result)
 
-        return results, current_code
+        return results
+
+
+    def merge_results(self, original_code, selected_results):
+        """
+        Fusionne le code original avec les propositions sélectionnées par l'utilisateur
+        """
+        if not selected_results:
+            return original_code
+        proposals = [res["proposal"] for res in selected_results]
+        return self.merge_agent.merge(original_code, proposals)
