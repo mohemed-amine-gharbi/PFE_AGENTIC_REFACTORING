@@ -15,11 +15,23 @@ class DuplicationAgent(BaseAgent):
         )
         return [prompt]  # On retourne le prompt comme analyse initiale
 
-    def apply(self, code, language):
+    def apply(self, code, language, temperature=None):
         analysis = self.analyze(code, language)
         prompt = (
             f"Refactor the following {language} code by reducing duplication. "
             "Keep functionality unchanged."
         )
-        proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
-        return {"name": self.name, "analysis": analysis, "proposal": proposal}
+        if temperature is not None:
+            proposal = self.llm.ask(
+                system_prompt=prompt,
+                user_prompt=code,
+                temperature=temperature
+            )
+        else:
+            proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
+        return {
+            "name": self.name, 
+            "analysis": analysis, 
+            "proposal": proposal,
+            "temperature_used": temperature
+        }

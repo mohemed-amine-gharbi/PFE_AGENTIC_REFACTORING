@@ -24,14 +24,26 @@ class LongFunctionAgent(BaseAgent):
         else:
             return ["LLM long function analysis needed"]
 
-    def apply(self, code, language):
+    def apply(self, code, language, temperature=None):
         analysis = self.analyze(code, language)
         if analysis:
             prompt = (
                 f"Refactor the following {language} code. Functions {analysis} are too long. "
                 "Split them into smaller functions without changing behavior."
             )
-            proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
+            if temperature is not None:
+                proposal = self.llm.ask(
+                    system_prompt=prompt,
+                    user_prompt=code,
+                    temperature=temperature
+                )
+            else:
+                proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
         else:
             proposal = code
-        return {"name": self.name, "analysis": analysis, "proposal": proposal}
+        return {
+            "name": self.name, 
+            "analysis": analysis, 
+            "proposal": proposal,
+            "temperature_used": temperature
+        }

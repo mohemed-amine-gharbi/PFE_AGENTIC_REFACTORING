@@ -22,14 +22,26 @@ class ImportAgent(BaseAgent):
         else:
             return ["LLM import analysis needed"]
 
-    def apply(self, code, language):
+    def apply(self, code, language, temperature=None):
         analysis = self.analyze(code, language)
         if analysis:
             prompt = (
                 f"Refactor the following {language} code by removing unused imports: {analysis}. "
                 "Keep functionality unchanged."
             )
-            proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
+            if temperature is not None:
+                proposal = self.llm.ask(
+                    system_prompt=prompt,
+                    user_prompt=code,
+                    temperature=temperature
+                )
+            else:
+                proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
         else:
             proposal = code
-        return {"name": self.name, "analysis": analysis, "proposal": proposal}
+        return {
+            "name": self.name, 
+            "analysis": analysis, 
+            "proposal": proposal,
+            "temperature_used": temperature
+        }

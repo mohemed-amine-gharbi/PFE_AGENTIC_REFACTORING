@@ -17,11 +17,23 @@ class ComplexityAgent(BaseAgent):
         nested_loops = [line for line in code.splitlines() if "for" in line or "while" in line]
         return nested_loops
 
-    def apply(self, code, language):
+    def apply(self, code, language, temperature=None):
         analysis = self.analyze(code)
         if analysis:
             prompt = self.build_prompt(code, language)
-            proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
+            if temperature is not None:
+                proposal = self.llm.ask(
+                    system_prompt=prompt,
+                    user_prompt=code,
+                    temperature=temperature
+                )
+            else:
+                proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
         else:
             proposal = code
-        return {"name": self.name, "analysis": analysis, "proposal": proposal}
+        return {
+            "name": self.name, 
+            "analysis": analysis, 
+            "proposal": proposal,
+            "temperature_used": temperature
+        }
