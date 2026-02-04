@@ -1,91 +1,129 @@
-# core/ollama_llm_client.py
-
 import subprocess
 import json
+import time
 
 class OllamaLLMClient:
-    def __init__(self, model_name="mistral:latest"):
+    def __init__(self, model_name="mistral:latest", base_url="http://localhost:11434"):
         self.model_name = model_name
-        self.default_temperature = 0.3
+        self.base_url = base_url
     
-    def ask(self, system_prompt, user_prompt, temperature=None):
+    def ask(self, system_prompt, user_prompt, temperature=None, max_tokens=2000):
         """
-        Envoie le prompt au modèle Ollama local avec contrôle de température.
+        Envoie le prompt au modèle Ollama local avec support de température.
         
         Args:
-            system_prompt: Prompt système définissant le rôle
-            user_prompt: Prompt utilisateur avec le code
-            temperature: Contrôle de créativité (0.0-1.0)
+            system_prompt: Prompt système
+            user_prompt: Prompt utilisateur
+            temperature: Température pour la génération (0.0-1.0)
+            max_tokens: Nombre maximum de tokens à générer
         
         Returns:
             str: Réponse du modèle
         """
-        if temperature is None:
-            temperature = self.default_temperature
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
         
-        # Clamp la température dans la plage valide
-        temperature = max(0.0, min(1.0, temperature))
+        try:
+            # Méthode 1: Utiliser l'API REST d'Ollama (recommandée)
+            return self._ask_via_api(full_prompt, temperature, max_tokens)
+        except Exception as e:
+            # Méthode 2: Fallback avec subprocess
+            print(f"⚠️ API Ollama échouée, fallback subprocess: {e}")
+            return self._ask_via_subprocess(full_prompt)
+    
+    def _ask_via_api(self, prompt, temperature=None, max_tokens=2000):
+        """Utilise l'API REST d'Ollama"""
+        import requests
         
-        # Construire la requête JSON pour Ollama
         request_data = {
             "model": self.model_name,
-            "prompt": f"System: {system_prompt}\n\nUser: {user_prompt}",
+            "prompt": prompt,
             "stream": False,
             "options": {
-                "temperature": temperature,
-                "num_predict": 2000,  # Nombre maximum de tokens
-                "top_p": 0.9,  # Nucleus sampling
-                "repeat_penalty": 1.1  # Pénalité pour répétition
+                "num_predict": max_tokens
             }
         }
         
-        try:
-            # Utiliser l'API HTTP d'Ollama
-            import requests
-            
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json=request_data,
-                timeout=120  # Timeout de 120 secondes
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                return result.get("response", "").strip()
-            else:
-                return f"Error: HTTP {response.status_code} - {response.text}"
-                
-        except requests.exceptions.ConnectionError:
-            # Fallback sur l'ancienne méthode subprocess
-            return self._fallback_ask(system_prompt, user_prompt, temperature)
-        except Exception as e:
-            return f"Error: {str(e)}"
-    
-    def _fallback_ask(self, system_prompt, user_prompt, temperature):
-        """Méthode de fallback utilisant subprocess"""
-        full_prompt = f"System: {system_prompt}\n\nUser: {user_prompt}"
+        # Ajouter la température si spécifiée
+        if temperature is not None:
+            request_data["options"]["temperature"] = temperature
         
         try:
-            # Construire la commande avec température
-            command = [
-                "ollama", "run",
-                self.model_name,
-                "--temperature", str(temperature)
-            ]
+            response = requests.post(
+                f"{self.base_url}/api/generate",
+                json=request_data,
+                timeout=120  # 2 minutes timeout
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result.get("response", "").strip()
+            
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Erreur API Ollama: {e}")
+    
+    def _ask_via_subprocess(self, prompt):
+        """Méthode de fallback avec subprocess"""
+        try:
+            # Préparer la commande
+            cmd = ["ollama", "run", self.model_name]
             
             process = subprocess.Popen(
-                command,
+                cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8"
             )
-            stdout, stderr = process.communicate(full_prompt)
-
+            
+            stdout, stderr = process.communicate(prompt, timeout=60)
+            
             if process.returncode != 0:
-                return f"Error: {stderr.strip()}"
+                error_msg = stderr.strip() if stderr else f"Code de retour: {process.returncode}"
+                return f"Error: {error_msg}"
             
             return stdout.strip()
+            
+        except subprocess.TimeoutExpired:
+            process.kill()
+            return "Error: Timeout - le modèle a pris trop de temps à répondre"
         except Exception as e:
             return f"Error: {str(e)}"
+    
+    def list_models(self):
+        """Liste les modèles disponibles localement"""
+        try:
+            import requests
+            response = requests.get(f"{self.base_url}/api/tags")
+            if response.status_code == 200:
+                data = response.json()
+                return [model["name"] for model in data.get("models", [])]
+            return []
+        except:
+            # Fallback avec commande
+            try:
+                result = subprocess.run(
+                    ["ollama", "list"],
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')[1:]  # Ignorer l'en-tête
+                    models = []
+                    for line in lines:
+                        if line:
+                            parts = line.split()
+                            if parts:
+                                models.append(parts[0])
+                    return models
+                return []
+            except:
+                return []
+    
+    def test_connection(self):
+        """Teste la connexion à Ollama"""
+        try:
+            import requests
+            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            return response.status_code == 200
+        except:
+            return False
