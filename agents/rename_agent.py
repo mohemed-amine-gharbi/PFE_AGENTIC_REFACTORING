@@ -1,3 +1,5 @@
+# agents/rename_agent.py - Version corrigée
+
 from agents.base_agent import BaseAgent
 import re
 
@@ -29,7 +31,15 @@ class RenameAgent(BaseAgent):
             # Pour d'autres langages, on laisse le LLM analyser
             return ["LLM variable analysis needed"]
 
-    def apply(self, code, language):
+    def apply(self, code, language, temperature=None):
+        """
+        Applique le renommage avec contrôle de température optionnel.
+        
+        Args:
+            code: Code source à analyser
+            language: Langage de programmation
+            temperature: Température pour le LLM (optionnel)
+        """
         analysis = self.analyze(code, language)
         if analysis:
             # Prompt très précis pour le renommage
@@ -37,7 +47,22 @@ class RenameAgent(BaseAgent):
                 f"Refactor the following {language} code by renaming variables "
                 f"to meaningful names. Keep functionality unchanged. Variables: {analysis}"
             )
-            proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
+            
+            # Appel LLM avec ou sans température
+            if temperature is not None:
+                proposal = self.llm.ask(
+                    system_prompt=prompt, 
+                    user_prompt=code,
+                    temperature=temperature
+                )
+            else:
+                proposal = self.llm.ask(system_prompt=prompt, user_prompt=code)
         else:
             proposal = code
-        return {"name": self.name, "analysis": analysis, "proposal": proposal}
+        
+        return {
+            "name": self.name, 
+            "analysis": analysis, 
+            "proposal": proposal,
+            "temperature_used": temperature
+        }
