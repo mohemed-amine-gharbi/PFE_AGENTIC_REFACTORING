@@ -1,4 +1,4 @@
-# ==================== agents/test_agent.py (version améliorée) ====================
+# ==================== agents/test_agent.py (version ULTRA-ROBUSTE) ====================
 
 from .base_agent import BaseAgent
 from pathlib import Path
@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import os
 import sys
+import re
 
 
 class StaticTools:
@@ -20,39 +21,33 @@ class StaticTools:
     def _detect_available_tools(self):
         """Détecte les outils disponibles sur le système"""
         available = {}
-        
-        # Vérifier les outils Python
-        python_tools = ["ruff", "black", "mypy", "pylint"]
-        for tool in python_tools:
+        tools = [
+            # Python
+            "python", "ruff", "black", "mypy", "pytest", "coverage",
+            # JS
+            "npm", "npx", "node",
+            # Java
+            "javac", "mvn", "gradle",
+            # C/C++
+            "gcc", "g++", "make",
+            # Go
+            "go",
+            # Ruby
+            "ruby", "rspec"
+        ]
+
+        for tool in tools:
             try:
-                subprocess.run([tool, "--version"], 
-                              capture_output=True, 
-                              check=False)
+                subprocess.run(
+                    [tool, "--version"],
+                    capture_output=True,
+                    check=False,
+                    timeout=5
+                )
                 available[tool] = True
-            except (FileNotFoundError, OSError):
+            except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
                 available[tool] = False
-        
-        # Vérifier les compilateurs
-        compilers = {
-            "python": "python",
-            "java": "javac",
-            "gcc": "gcc",
-            "g++": "g++",
-            "go": "go",
-            "ruby": "ruby",
-            "node": "node",
-            "npm": "npm"
-        }
-        
-        for name, cmd in compilers.items():
-            try:
-                subprocess.run([cmd, "--version"] if cmd != "python" else [cmd, "--version"],
-                              capture_output=True,
-                              check=False)
-                available[name] = True
-            except (FileNotFoundError, OSError):
-                available[name] = False
-        
+
         return available
 
     def run(self, cmd, tool_name=None):
@@ -73,55 +68,84 @@ class StaticTools:
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                errors="ignore"
+                errors="ignore",
+                timeout=30
             )
             output = (p.stdout or "") + "\n" + (p.stderr or "")
             return p.returncode, output.strip(), ""
         except FileNotFoundError:
             return -1, "", f"Commande introuvable : {cmd[0]}"
+        except subprocess.TimeoutExpired:
+            return -1, "", f"Timeout : commande {cmd[0]} trop longue"
         except Exception as e:
             return -1, "", f"Erreur d'exécution : {str(e)}"
 
+    # ------------------------------------------------------------------
+    # PYTHON
+    # ------------------------------------------------------------------
+
     def python_syntax(self, filename):
-        """Vérifie la syntaxe Python (toujours disponible)"""
         return self.run(["python", "-m", "py_compile", filename], "python")
 
     def ruff(self):
-        """Exécute Ruff si disponible"""
-        if self.available_tools.get("ruff", False):
-            return self.run(["ruff", "check", ".", "--exit-zero"], "ruff")
-        return -1, "", "Ruff non installé. Installez avec: pip install ruff"
+        return self.run(["ruff", "check", ".", "--exit-zero"], "ruff")
 
     def black_check(self):
-        """Vérifie le formatage avec Black si disponible"""
-        if self.available_tools.get("black", False):
-            return self.run(["black", "--check", "."], "black")
-        return -1, "", "Black non installé. Installez avec: pip install black"
+        return self.run(["black", "--check", "."], "black")
 
     def mypy(self):
-        """Vérification de types avec mypy si disponible"""
-        if self.available_tools.get("mypy", False):
-            return self.run(["mypy", "."], "mypy")
-        return -1, "", "mypy non installé. Installez avec: pip install mypy"
+        return self.run(["mypy", "."], "mypy")
+
+    def pytest(self):
+        return self.run(
+            ["pytest", "-q", "--disable-warnings", "--maxfail=1"],
+            "pytest"
+        )
+
+    def coverage_pytest(self):
+        if not self.available_tools.get("coverage", False):
+            return -1, "", "coverage non installé"
+        return self.run(
+            ["coverage", "run", "-m", "pytest"],
+            "coverage"
+        )
+
+    # ------------------------------------------------------------------
+    # JAVASCRIPT / TYPESCRIPT
+    # ------------------------------------------------------------------
+
+    def jest(self):
+        return self.run(["npx", "jest", "--passWithNoTests"], "npx")
+
+    # ------------------------------------------------------------------
+    # JAVA
+    # ------------------------------------------------------------------
+
+    def maven_test(self):
+        return self.run(["mvn", "test"], "mvn")
+
+    # ------------------------------------------------------------------
+    # GO
+    # ------------------------------------------------------------------
+
+    def go_test(self):
+        return self.run(["go", "test", "./..."], "go")
+
+    # ------------------------------------------------------------------
+    # RUBY
+    # ------------------------------------------------------------------
+
+    def rspec(self):
+        return self.run(["rspec"], "rspec")
 
 
 class TestAgent(BaseAgent):
     """
-    Agent de validation avec gestion des outils manquants.
+    Agent de validation avec gestion des outils manquants et extraction ultra-robuste.
     """
 
     def __init__(self, llm):
         super().__init__(llm, name="TestAgent")
-        self.supported_languages = {
-            "python": ["python_syntax", "ruff", "black_check", "mypy"],
-            "javascript": [],
-            "typescript": [],
-            "java": [],
-            "c": [],
-            "cpp": [],
-            "go": [],
-            "ruby": [],
-        }
 
     def analyze(self, code, language):
         """
@@ -161,11 +185,14 @@ class TestAgent(BaseAgent):
             
             # Initialiser les outils
             tools = StaticTools(path, language)
-            
-            # Vérification syntaxique BASIQUE (toujours disponible)
+
+            # ================= PYTHON =================
             if lang_key == "python":
+
+                # -------- Syntaxe Python --------
                 ret, out, err = tools.python_syntax(filename)
                 status = "SUCCESS" if ret == 0 else "FAILED"
+
                 detail = {
                     "tool": "python_syntax",
                     "status": status,
@@ -173,28 +200,24 @@ class TestAgent(BaseAgent):
                     "output": out or "Syntaxe Python valide",
                     "error": err
                 }
-                
+
                 if err:
                     detail["suggestion"] = "Utilisez 'python -m py_compile fichier.py' pour vérifier manuellement"
-                
+
                 report["details"].append(detail)
-                
+
                 if ret != 0:
                     report["status"] = "FAILED"
                     report["summary"].append("❌ Erreur de syntaxe Python détectée")
-                    
-                    # Afficher l'erreur de syntaxe de manière lisible
+
                     if out:
-                        error_lines = out.split("\n")
-                        for line in error_lines[:3]:  # Afficher seulement les 3 premières lignes
+                        for line in out.split("\n")[:3]:
                             if line.strip():
                                 report["summary"].append(f"   → {line.strip()}")
-            
-            # Outils optionnels (avec gestion d'absence)
-            if lang_key == "python":
-                # Ruff
+
+                # -------- Ruff --------
                 ret, out, err = tools.ruff()
-                if err and "non installé" in err:
+                if err and "non disponible" in err:
                     report["warnings"].append("⚠️ Ruff non installé - impossible de vérifier le style")
                     report["tools_available"] = False
                 else:
@@ -210,10 +233,10 @@ class TestAgent(BaseAgent):
                         report["summary"].append("⚠️ Problèmes de style détectés (Ruff)")
                         if report["status"] == "SUCCESS":
                             report["status"] = "WARNING"
-                
-                # Black
+
+                # -------- Black --------
                 ret, out, err = tools.black_check()
-                if err and "non installé" in err:
+                if err and "non disponible" in err:
                     report["warnings"].append("⚠️ Black non installé - impossible de vérifier le formatage")
                 else:
                     status = "SUCCESS" if ret == 0 else "WARNING"
@@ -226,10 +249,12 @@ class TestAgent(BaseAgent):
                     })
                     if ret != 0:
                         report["warnings"].append("Code nécessite un reformatage avec Black")
-                
-                # mypy
+                        if report["status"] == "SUCCESS":
+                            report["status"] = "WARNING"
+
+                # -------- mypy --------
                 ret, out, err = tools.mypy()
-                if err and "non installé" in err:
+                if err and "non disponible" in err:
                     report["warnings"].append("⚠️ mypy non installé - impossible de vérifier les types")
                 else:
                     status = "SUCCESS" if ret == 0 else "WARNING"
@@ -242,11 +267,106 @@ class TestAgent(BaseAgent):
                     })
                     if ret != 0:
                         report["warnings"].append("Problèmes de typage détectés")
-            
-            # Calculer les métriques de base (toujours disponibles)
+                        if report["status"] == "SUCCESS":
+                            report["status"] = "WARNING"
+
+                # -------- Pytest --------
+                ret, out, err = tools.pytest()
+                if err and "non disponible" in err:
+                    report["warnings"].append("⚠️ pytest non installé - tests unitaires ignorés")
+                else:
+                    status = "SUCCESS" if ret == 0 else "FAILED"
+                    report["details"].append({
+                        "tool": "pytest",
+                        "status": status,
+                        "return_code": ret,
+                        "output": out or "✅ Tous les tests pytest passent",
+                        "error": err
+                    })
+                    if ret != 0:
+                        report["status"] = "FAILED"
+                        report["summary"].append("❌ Tests pytest échoués")
+
+            # ================= JAVASCRIPT / TYPESCRIPT =================
+            elif lang_key in ["javascript", "typescript"]:
+
+                ret, out, err = tools.jest()
+                if err and "non disponible" in err:
+                    report["warnings"].append("⚠️ Jest non installé - tests ignorés")
+                else:
+                    status = "SUCCESS" if ret == 0 else "FAILED"
+                    report["details"].append({
+                        "tool": "jest",
+                        "status": status,
+                        "return_code": ret,
+                        "output": out or "✅ Tous les tests Jest passent",
+                        "error": err
+                    })
+                    if ret != 0:
+                        report["status"] = "FAILED"
+                        report["summary"].append("❌ Tests Jest échoués")
+
+            # ================= JAVA =================
+            elif lang_key == "java":
+
+                ret, out, err = tools.maven_test()
+                if err and "non disponible" in err:
+                    report["warnings"].append("⚠️ Maven non installé - tests ignorés")
+                else:
+                    status = "SUCCESS" if ret == 0 else "FAILED"
+                    report["details"].append({
+                        "tool": "maven",
+                        "status": status,
+                        "return_code": ret,
+                        "output": out or "✅ Tests Maven réussis",
+                        "error": err
+                    })
+                    if ret != 0:
+                        report["status"] = "FAILED"
+                        report["summary"].append("❌ Tests Maven échoués")
+
+            # ================= GO =================
+            elif lang_key == "go":
+
+                ret, out, err = tools.go_test()
+                if err and "non disponible" in err:
+                    report["warnings"].append("⚠️ Go non installé - tests ignorés")
+                else:
+                    status = "SUCCESS" if ret == 0 else "FAILED"
+                    report["details"].append({
+                        "tool": "go test",
+                        "status": status,
+                        "return_code": ret,
+                        "output": out or "✅ Tests Go réussis",
+                        "error": err
+                    })
+                    if ret != 0:
+                        report["status"] = "FAILED"
+                        report["summary"].append("❌ Tests Go échoués")
+
+            # ================= RUBY =================
+            elif lang_key == "ruby":
+
+                ret, out, err = tools.rspec()
+                if err and "non disponible" in err:
+                    report["warnings"].append("⚠️ RSpec non installé - tests ignorés")
+                else:
+                    status = "SUCCESS" if ret == 0 else "FAILED"
+                    report["details"].append({
+                        "tool": "rspec",
+                        "status": status,
+                        "return_code": ret,
+                        "output": out or "✅ Tests RSpec réussis",
+                        "error": err
+                    })
+                    if ret != 0:
+                        report["status"] = "FAILED"
+                        report["summary"].append("❌ Tests RSpec échoués")
+
+            # ================= METRICS =================
             self._calculate_basic_metrics(code, report, lang_key)
-        
-        return report
+
+            return report
 
     def _calculate_basic_metrics(self, code, report, language):
         """Calcule les métriques de base sans outils externes"""
@@ -277,7 +397,7 @@ class TestAgent(BaseAgent):
                     if indent > 0:
                         indent_sizes.add(indent)
             
-            if len(indent_sizes) > 2:  # Plus de 2 tailles d'indentation différentes
+            if len(indent_sizes) > 2:
                 warnings.append("Indentation incohérente détectée")
         
         if warnings:
@@ -291,13 +411,11 @@ class TestAgent(BaseAgent):
         
         # Si erreur de syntaxe et LLM disponible, essayer de corriger
         if analysis["status"] == "FAILED" and hasattr(self.llm, 'ask'):
-            # Chercher les erreurs de syntaxe
             syntax_errors = []
             for detail in analysis.get("details", []):
                 if detail.get("tool") == "python_syntax" and detail.get("status") == "FAILED":
                     output = detail.get("output", "")
                     if output:
-                        # Extraire l'erreur de syntaxe
                         lines = output.split("\n")
                         for line in lines:
                             if "SyntaxError" in line or "Error" in line:
@@ -307,41 +425,51 @@ class TestAgent(BaseAgent):
                 try:
                     print(f"🔄 Tentative de correction de {len(syntax_errors)} erreur(s) de syntaxe...")
                     
-                    prompt = f"""
-Le code Python suivant a des erreurs de syntaxe. 
-Corrige UNIQUEMENT les erreurs de syntaxe, ne change pas la logique.
-Retourne SEULEMENT le code Python corrigé.
+                    # NOUVEAU PROMPT ULTRA-STRICT
+                    prompt = f"""INSTRUCTIONS CRITIQUES - SUIVEZ EXACTEMENT:
 
-Erreurs détectées:
-{chr(10).join(f'- {err}' for err in syntax_errors[:3])}
+1. Vous DEVEZ retourner UNIQUEMENT du code Python
+2. AUCUN texte explicatif AVANT le code
+3. AUCUN texte explicatif APRÈS le code
+4. PAS de "Here's", "Voici", "Le code", etc.
+5. PAS de numéros (1., 2., 3., etc.)
+6. PAS de markdown (```python)
+7. Commencez DIRECTEMENT par import, def, class, ou du code Python
 
-Code avec erreurs:
+Erreurs à corriger:
+{chr(10).join(syntax_errors[:3])}
+
+CODE À CORRIGER (corrigez SEULEMENT la syntaxe):
 {code}
-"""
+
+RETOURNEZ UNIQUEMENT LE CODE PYTHON CORRIGÉ (première ligne doit être du code):"""
                     
                     corrected_code = self.llm.ask(
-                        system_prompt="Expert en correction de syntaxe Python. Ne change que ce qui est nécessaire pour corriger les erreurs de syntaxe.",
+                        system_prompt="Vous êtes un correcteur de syntaxe. Retournez UNIQUEMENT du code Python. AUCUNE explication. Première ligne = code Python.",
                         user_prompt=prompt,
-                        temperature=0.1  # Très bas pour la précision
+                        temperature=0.05  # Ultra-bas
                     )
                     
-                    # Nettoyer le code corrigé
-                    corrected_code = self._clean_llm_response(corrected_code)
+                    # EXTRACTION ULTRA-ROBUSTE
+                    corrected_code = self._extract_pure_code(corrected_code)
                     
-                    # Vérifier si le code corrigé est différent
                     if corrected_code and corrected_code != code:
-                        # Réanalyser
-                        corrected_analysis = self.analyze(corrected_code, language)
-                        if corrected_analysis["status"] != "FAILED":
-                            code = corrected_code
-                            analysis = corrected_analysis
-                            analysis["summary"].insert(0, "✅ Erreurs de syntaxe corrigées automatiquement")
-                            analysis["summary"].append("🔧 Correction par LLM avec température=0.1")
+                        # Vérifier que c'est du vrai code
+                        if self._is_valid_python_code(corrected_code):
+                            corrected_analysis = self.analyze(corrected_code, language)
+                            if corrected_analysis["status"] != "FAILED":
+                                code = corrected_code
+                                analysis = corrected_analysis
+                                analysis["summary"].insert(0, "✅ Erreurs de syntaxe corrigées automatiquement")
+                            else:
+                                print("⚠️ Le code corrigé a encore des erreurs")
+                                analysis["summary"].append("⚠️ Correction automatique échouée")
                         else:
-                            analysis["summary"].append("⚠️ Correction automatique échouée - erreurs persistantes")
+                            print("⚠️ Le LLM n'a pas retourné du code Python valide")
+                            analysis["summary"].append("⚠️ LLM n'a pas retourné du code valide")
                     
                 except Exception as e:
-                    print(f"⚠️ Échec de la correction automatique: {e}")
+                    print(f"⚠️ Échec de la correction: {e}")
                     analysis["summary"].append("❌ Correction automatique impossible")
         
         return {
@@ -356,34 +484,155 @@ Code avec erreurs:
             "temperature_used": temperature if temperature is not None else "N/A"
         }
     
-    def _clean_llm_response(self, response):
-        """Nettoie la réponse du LLM pour extraire uniquement le code"""
-        # Supprimer les backticks
-        if "```" in response:
-            parts = response.split("```")
-            if len(parts) >= 3:
-                # Prendre le contenu entre les premiers backticks
-                response = parts[1]
-                # Enlever le langage spécificateur
-                if response.startswith("python\n"):
-                    response = response[7:]
+    def _extract_pure_code(self, response):
+        """
+        EXTRACTION ULTRA-ROBUSTE avec 5 méthodes successives.
+        """
+        original_response = response
         
-        # Supprimer le texte explicatif avant le code
-        lines = response.splitlines()
+        # MÉTHODE 1: Enlever tout le texte explicatif ligne par ligne
+        lines = response.split("\n")
         code_lines = []
         code_started = False
         
+        # Patterns à ignorer (AUGMENTÉS)
+        ignore_patterns = [
+            r"^here'?s?\s+",
+            r"^voici\s+",
+            r"^le code",
+            r"^the code",
+            r"^corrected",
+            r"^corrigé",
+            r"^refactored",
+            r"^improved",
+            r"^\d+\.",  # Numéros de liste
+            r"^[-*]\s+",  # Puces
+            r"^this\s+",
+            r"^note:",
+            r"^explanation",
+            r"^i've",
+            r"^addresses",
+            r"^variable names",
+        ]
+        
         for line in lines:
             stripped = line.strip()
+            stripped_lower = stripped.lower()
+            
+            # Ignorer les lignes vides au début
+            if not code_started and not stripped:
+                continue
+            
+            # Ignorer les lignes markdown
+            if stripped in ["```python", "```py", "```", "python", "py"]:
+                continue
+            
+            # Ignorer les lignes explicatives
             if not code_started:
-                if stripped.startswith(("import", "def", "class", "from", "@")):
-                    code_started = True
-                    code_lines.append(line)
-                elif stripped and not stripped.startswith(("# ", "// ")):
-                    # Si c'est du code sans mot-clé évident
+                should_ignore = False
+                for pattern in ignore_patterns:
+                    if re.match(pattern, stripped_lower):
+                        should_ignore = True
+                        break
+                
+                if should_ignore:
+                    continue
+                
+                # Détecter le VRAI début du code
+                if self._line_is_python_code(line):
                     code_started = True
                     code_lines.append(line)
             else:
+                # Une fois commencé, prendre tout SAUF les explications de fin
+                should_stop = False
+                for pattern in ignore_patterns:
+                    if re.match(pattern, stripped_lower):
+                        should_stop = True
+                        break
+                
+                if should_stop:
+                    break
+                
                 code_lines.append(line)
         
-        return "\n".join(code_lines) if code_lines else response
+        result = "\n".join(code_lines).strip()
+        
+        # MÉTHODE 2: Chercher les blocs markdown
+        if not result or not self._is_valid_python_code(result):
+            markdown_match = re.search(r'```(?:python|py)?\n(.*?)```', response, re.DOTALL)
+            if markdown_match:
+                result = markdown_match.group(1).strip()
+        
+        # MÉTHODE 3: Enlever tout avant "import", "def", "class", "from"
+        if not result or not self._is_valid_python_code(result):
+            for keyword in ["import ", "from ", "def ", "class "]:
+                if keyword in response:
+                    idx = response.find(keyword)
+                    result = response[idx:].strip()
+                    break
+        
+        # MÉTHODE 4: Enlever les numéros de lignes si présents
+        if result:
+            result = re.sub(r'^\d+[\.:]\s*', '', result, flags=re.MULTILINE)
+        
+        # MÉTHODE 5: Si tout échoue, retourner l'original
+        if not result or len(result) < 10:
+            print("⚠️ Extraction échouée, retour à l'original")
+            return original_response
+        
+        return result
+    
+    def _line_is_python_code(self, line):
+        """Vérifie si UNE ligne est du code Python"""
+        stripped = line.strip()
+        if not stripped:
+            return False
+        
+        # Mots-clés Python qui commencent du code
+        python_starters = [
+            "import ", "from ", "def ", "class ", "@",
+            "if ", "elif ", "else:", "for ", "while ",
+            "with ", "try:", "except ", "finally:",
+            "return ", "yield ", "raise ", "assert ",
+            "print(", "len(", "str(", "int(", "float(",
+            "#", '"""', "'''",
+        ]
+        
+        # Variables CUSTOMERS, etc.
+        if re.match(r'^[A-Z_]+\s*=', stripped):
+            return True
+        
+        return any(stripped.startswith(starter) for starter in python_starters)
+    
+    def _is_valid_python_code(self, code):
+        """
+        Vérifie si le code est du Python valide (pas juste du texte).
+        """
+        if not code or len(code.strip()) < 5:
+            return False
+        
+        lines = [l.strip() for l in code.split("\n") if l.strip()]
+        if not lines:
+            return False
+        
+        first_line = lines[0]
+        
+        # DOIT commencer par du code Python
+        if not self._line_is_python_code(first_line):
+            return False
+        
+        # NE DOIT PAS contenir de texte explicatif
+        bad_phrases = [
+            "here's", "voici", "refactored", "improved",
+            "addresses the", "i've made", "explanation"
+        ]
+        
+        first_20_chars = first_line[:20].lower()
+        if any(phrase in first_20_chars for phrase in bad_phrases):
+            return False
+        
+        # Au moins 30% des lignes doivent être du code
+        code_line_count = sum(1 for line in lines if self._line_is_python_code(line))
+        code_ratio = code_line_count / len(lines)
+        
+        return code_ratio >= 0.3
