@@ -6,3 +6,6 @@ openai>=1.0.0
 ruff>=0.1.0
 langgraph>=0.0.20
 langchain>=0.1.0
+faiss-cpu
+networkx
+sentence-transformers
