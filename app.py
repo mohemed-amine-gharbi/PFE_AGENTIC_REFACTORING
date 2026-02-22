@@ -71,7 +71,7 @@ def init_system():
         from core.langgraph_orchestrator import LangGraphOrchestrator
         
         # Initialiser le client LLM
-        llm_client = OllamaLLMClient(model_name="mistral:latest")
+        llm_client = OllamaLLMClient(model_name)
         
         # Initialiser l'orchestrator LangGraph
         orchestrator = LangGraphOrchestrator(llm_client)
@@ -117,7 +117,7 @@ with st.sidebar:
     # Modèle
     model_name = st.selectbox(
         "🤖 Modèle Ollama",
-        ["mistral:latest", "llama2:latest", "codellama:latest", "phi:latest"],
+        ["mistral:latest", "llama2:latest", "codellama:latest", "phi:latest","qwen2.5-coder:latest"],
         index=0
     )
     
