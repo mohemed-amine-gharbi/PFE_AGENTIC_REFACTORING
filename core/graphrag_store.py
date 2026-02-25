@@ -1,90 +1,195 @@
 from __future__ import annotations
-from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
-import json
-import pickle
+from typing import List, Set
+import ast
+import re
+import hashlib
 
-import faiss
-import networkx as nx
-from sentence_transformers import SentenceTransformer
-
-
-@dataclass
-class Chunk:
-    id: str
-    text: str
-    source: str  # filepath
+from .graphrag_store import GraphRAGStore, Chunk
 
 
-class GraphRAGStore:
-    def __init__(
-        self,
-        index_path: str = "graphrag/faiss.index",
-        meta_path: str = "graphrag/meta.json",
-        graph_path: str = "graphrag/graph.gpickle",
-    ):
-        self.index_path = Path(index_path)
-        self.meta_path = Path(meta_path)
-        self.graph_path = Path(graph_path)
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
+# -------------------- Filtres d'ingest --------------------
 
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
-        self.index = None
-        self.meta: List[dict] = []
-        self.g = nx.Graph()
+EXCLUDED_DIR_TOKENS = {
+    "__pycache__",
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "test_results",
+    "graphrag",   # évite d'indexer les artefacts d'index eux-mêmes
+}
 
-        if self.index_path.exists() and self.meta_path.exists():
-            self.index = faiss.read_index(str(self.index_path))
-            self.meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
+EXCLUDED_FILE_NAMES = {
+    "base_agent.py",
+    "merge_agent.py",
+    "langgraph_orchestrator.py",
+    "workflow_graph.py",
+    "workflow_nodes.py",
+    "workflow_state.py",
+}
 
-        if self.graph_path.exists():
-            try:
-                with open(self.graph_path, "rb") as f:
-                    self.g = pickle.load(f)
-            except Exception:
-                # Fallback: recréer un graphe vide si fichier corrompu/incompatible
-                self.g = nx.Graph()
+EXCLUDED_EXTENSIONS = {
+    ".pyc", ".xlsx", ".png", ".jpg", ".jpeg", ".webp", ".gif", ".log"
+}
 
-    def _embed(self, texts: List[str]):
-        emb = self.model.encode(texts, normalize_embeddings=True)
-        return emb.astype("float32")
 
-    def save(self):
-        if self.index is not None:
-            faiss.write_index(self.index, str(self.index_path))
+def should_index_file(file: Path) -> bool:
+    """Détermine si un fichier doit être indexé."""
+    try:
+        parts = set(file.parts)
+        if any(tok in parts for tok in EXCLUDED_DIR_TOKENS):
+            return False
 
-        self.meta_path.write_text(
-            json.dumps(self.meta, ensure_ascii=False, indent=2),
-            encoding="utf-8"
-        )
+        if file.name.lower() in EXCLUDED_FILE_NAMES:
+            return False
 
-        with open(self.graph_path, "wb") as f:
-            pickle.dump(self.g, f, protocol=pickle.HIGHEST_PROTOCOL)
+        if file.suffix.lower() in EXCLUDED_EXTENSIONS:
+            return False
 
-    def build_vectors(self, chunks: List[Chunk]):
-        if not chunks:
-            self.index = None
-            self.meta = []
-            return
+        return True
+    except Exception:
+        return False
 
-        vecs = self._embed([c.text for c in chunks])
-        dim = vecs.shape[1]
-        self.index = faiss.IndexFlatIP(dim)  # cosine similarity (normalize + inner product)
-        self.index.add(vecs)
 
-        self.meta = [{"id": c.id, "text": c.text, "source": c.source} for c in chunks]
+# -------------------- Chunking / symbols --------------------
 
-    def vector_search(self, query: str, k: int = 5) -> List[Tuple[dict, float]]:
-        if self.index is None:
-            return []
+def chunk_text(text: str, max_chars: int = 1200, overlap: int = 150) -> List[str]:
+    chunks = []
+    i = 0
+    step = max_chars - overlap
+    if step <= 0:
+        step = max_chars
 
-        qv = self._embed([query])
-        scores, ids = self.index.search(qv, k)
+    while i < len(text):
+        chunks.append(text[i:i + max_chars])
+        i += step
+    return chunks
 
-        out: List[Tuple[dict, float]] = []
-        for score, idx in zip(scores[0], ids[0]):
-            if idx == -1:
-                continue
-            out.append((self.meta[idx], float(score)))
-        return out
+
+def stable_id(s: str) -> str:
+    return hashlib.sha1(s.encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+
+def extract_symbols_python(code: str) -> Set[str]:
+    """Classes, fonctions, imports via AST."""
+    symbols: Set[str] = set()
+    try:
+        tree = ast.parse(code)
+    except Exception:
+        return symbols
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            symbols.add(node.name)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            symbols.add(node.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                symbols.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                symbols.add(node.module.split(".")[0])
+            for alias in node.names:
+                symbols.add(alias.name)
+    return symbols
+
+
+def extract_mentions_symbols(text: str) -> Set[str]:
+    """Heuristique: CamelCase + identifiants snake_case."""
+    camel = set(re.findall(r"\b[A-Z][a-zA-Z0-9_]{2,}\b", text))
+    snake = set(re.findall(r"\b[a-z_][a-z0-9_]{2,}\b", text))
+    bad = {"return", "import", "from", "class", "def", "self", "True", "False", "None"}
+    return {t for t in (camel | snake) if t not in bad and 2 < len(t) <= 60}
+
+
+# -------------------- Ingest principal --------------------
+
+def ingest(paths: List[str], patterns=("**/*.py", "**/*.md", "**/*.txt", "**/*.jsonl")):
+    """
+    Construit l'index GraphRAG à partir des chemins donnés.
+
+    Conseillé pour ton cas:
+        ingest(["knowledge"])
+    """
+    store = GraphRAGStore()
+    all_chunks: List[Chunk] = []
+
+    indexed_files = 0
+    skipped_files = 0
+
+    for base in paths:
+        base_path = Path(base)
+        if not base_path.exists():
+            print(f"⚠️ Chemin introuvable, ignoré: {base}")
+            continue
+
+        for pat in patterns:
+            for file in base_path.glob(pat):
+                if not file.is_file():
+                    continue
+
+                # ✅ filtre d'ingest
+                if not should_index_file(file):
+                    skipped_files += 1
+                    continue
+
+                try:
+                    text = file.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    skipped_files += 1
+                    continue
+
+                if not text or not text.strip():
+                    skipped_files += 1
+                    continue
+
+                indexed_files += 1
+
+                file_posix = file.as_posix()
+                file_node = f"file:{file_posix}"
+                store.g.add_node(file_node, type="file", path=file_posix)
+
+                # Symbols defined/imported in this file
+                symbols = set()
+                if file.suffix.lower() == ".py":
+                    symbols |= extract_symbols_python(text)
+
+                for sym in symbols:
+                    sym_node = f"symbol:{sym}"
+                    store.g.add_node(sym_node, type="symbol", name=sym)
+                    store.g.add_edge(sym_node, file_node, rel="defined_in")
+
+                # Chunk nodes + mention edges
+                for part in chunk_text(text):
+                    if not part.strip():
+                        continue
+
+                    cid = stable_id(file_posix + ":" + part[:250])
+                    chunk_node = f"chunk:{cid}"
+
+                    all_chunks.append(Chunk(id=cid, text=part, source=file_posix))
+
+                    store.g.add_node(chunk_node, type="chunk", id=cid, source=file_posix)
+                    store.g.add_edge(chunk_node, file_node, rel="in_file")
+
+                    # Mentions -> symbols
+                    mentions = extract_mentions_symbols(part)
+                    for m in mentions:
+                        m_node = f"symbol:{m}"
+                        store.g.add_node(m_node, type="symbol", name=m)
+                        store.g.add_edge(chunk_node, m_node, rel="mentions")
+
+    store.build_vectors(all_chunks)
+    store.save()
+
+    print(f"✅ GraphRAG indexed {len(all_chunks)} chunks from {indexed_files} files. Saved to graphrag/")
+    print(f"ℹ️  Skipped files: {skipped_files}")
+
+
+if __name__ == "__main__":
+    # ✅ Pour ton usage RAG de patterns/exemples:
+    ingest(["knowledge"])
+
+    # ❌ Ancien (polluant):
+    # ingest(["knowledge", "core", "agents"])
