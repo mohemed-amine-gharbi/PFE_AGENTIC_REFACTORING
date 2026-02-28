@@ -84,6 +84,7 @@ class LangGraphOrchestrator:
         workflow_start_time = time.time()
         
         initial_state: RefactorState = {
+            "_orchestrator": self,  # ⭐ référence à l'orchestrateur
             "original_code": code,
             "language": language,
             "current_code": code,
@@ -96,6 +97,9 @@ class LangGraphOrchestrator:
             "temperature_override": temperature_override,  # ⭐ IMPORTANT
             "auto_patch": auto_patch,
             "auto_test": auto_test,
+            "patch_test_iteration": 0,       # ⭐ NOUVEAU
+            "patch_test_errors": [],          # ⭐ NOUVEAU
+            "patch_test_status": "pending",   # ⭐ NOUVEAU
             "metrics": {},
             "error": None,
             "status": "initialized",
@@ -113,44 +117,8 @@ class LangGraphOrchestrator:
             # Récupérer le code après le workflow
             final_code = final_state.get("current_code", code)
             
-            # ⭐ Exécuter PatchAgent si demandé
-            patch_result = None
-            if auto_patch:
-                print("\n🩹 Application du PatchAgent...")
-                patch_agent = self.agent_instances.get("PatchAgent")
-                if patch_agent:
-                    patch_start = time.time()
-                    patch_result = patch_agent.apply(final_code, language)
-                    patch_duration = time.time() - patch_start
-                    
-                    # Ajouter les infos de durée
-                    patch_result["duration"] = patch_duration
-                    patch_result["status"] = "SUCCESS"
-                    
-                    final_state["patch_result"] = patch_result
-                    final_code = patch_result.get("proposal", final_code)
-                    
-                    print(f"   ✅ PatchAgent terminé en {patch_duration:.2f}s")
-            
-            # ⭐ Exécuter TestAgent si demandé
-            test_result = None
-            if auto_test:
-                print("\n🧪 Exécution du TestAgent...")
-                test_agent = self.agent_instances.get("TestAgent")
-                if test_agent:
-                    test_start = time.time()
-                    test_result = test_agent.apply(final_code, language)
-                    test_duration = time.time() - test_start
-                    
-                    # Ajouter les infos de durée
-                    test_result["duration"] = test_duration
-                    
-                    final_state["test_result"] = test_result
-                    
-                    test_status = test_result.get("status", "UNKNOWN")
-                    print(f"   {'✅' if test_status == 'SUCCESS' else '❌'} TestAgent terminé en {test_duration:.2f}s - Statut: {test_status}")
-            
-            final_state["final_code"] = final_code
+           
+            final_state["final_code"] = final_state.get("current_code", code)
             final_state["metrics"]["workflow_duration"] = workflow_duration
             
             return self._prepare_final_report(final_state)

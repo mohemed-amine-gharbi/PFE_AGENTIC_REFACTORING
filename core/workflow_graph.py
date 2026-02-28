@@ -8,6 +8,7 @@ import time
 from langgraph.graph import StateGraph, END
 from .workflow_state import RefactorState, AgentResult
 
+MAX_PATCH_TEST_ITERATIONS = 3
 
 def create_agent_node(orchestrator, agent_name: str):
     """
@@ -126,29 +127,120 @@ def merge_node(state: RefactorState) -> RefactorState:
     
     return new_state
 
+def patch_node(state: RefactorState) -> RefactorState:
+    """Nœud PatchAgent — corrige le code en tenant compte des erreurs du test."""
+    print(f"\n🩹 PatchAgent (itération {state['patch_test_iteration'] + 1}/{MAX_PATCH_TEST_ITERATIONS})...")
+
+    patch_agent = state["_orchestrator"].agent_instances.get("PatchAgent")
+    if not patch_agent:
+        return state
+
+    errors = state.get("patch_test_errors", [])
+    code = state["current_code"]
+    language = state["language"]
+
+    start = time.time()
+    patch_result = patch_agent.apply(code, language, errors=errors)
+    duration = time.time() - start
+
+    new_state = state.copy()
+    new_state["current_code"] = patch_result.get("proposal", code)
+    new_state["patch_result"] = {**patch_result, "duration": duration, "status": "SUCCESS"}
+    new_state["patch_test_iteration"] = state.get("patch_test_iteration", 0) + 1
+    new_state["history"].append(f"PatchAgent iteration {new_state['patch_test_iteration']}")
+
+    print(f"   ✅ Patch terminé en {duration:.2f}s")
+    return new_state
+
+
+def test_node(state: RefactorState) -> RefactorState:
+    """Nœud TestAgent — analyse le code et collecte les erreurs."""
+    print(f"\n🧪 TestAgent (itération {state['patch_test_iteration']}/{MAX_PATCH_TEST_ITERATIONS})...")
+
+    test_agent = state["_orchestrator"].agent_instances.get("TestAgent")
+    if not test_agent:
+        return state
+
+    start = time.time()
+    test_result = test_agent.apply(state["current_code"], state["language"])
+    duration = time.time() - start
+
+    # Collecter les erreurs pour le prochain patch
+    errors = _extract_errors(test_result)
+    test_status = "passed" if not errors else "failed"
+
+    new_state = state.copy()
+    new_state["test_result"] = {**test_result, "duration": duration}
+    new_state["patch_test_errors"] = errors
+    new_state["patch_test_status"] = test_status
+    new_state["history"].append(f"TestAgent: {test_status} ({len(errors)} erreurs)")
+
+    icon = "✅" if test_status == "passed" else "❌"
+    print(f"   {icon} Test {test_status} en {duration:.2f}s — {len(errors)} erreur(s)")
+    return new_state
+
+
+def route_patch_test(state: RefactorState) -> str:
+    """
+    Décide si on boucle (patch→test) ou si on termine.
+    Conditions de sortie :
+      - test passé (aucune erreur)
+      - itérations max atteintes
+    """
+    status = state.get("patch_test_status", "pending")
+    iteration = state.get("patch_test_iteration", 0)
+
+    if status == "passed":
+        print(f"\n✅ Boucle patch/test terminée — code valide après {iteration} itération(s)")
+        return END
+
+    if iteration >= MAX_PATCH_TEST_ITERATIONS:
+        print(f"\n⚠️  Itérations max ({MAX_PATCH_TEST_ITERATIONS}) atteintes — sortie forcée")
+        new_state = state.copy()
+        new_state["patch_test_status"] = "max_reached"
+        return END
+
+    print(f"\n🔄 Erreurs détectées — nouvelle itération patch ({iteration + 1}/{MAX_PATCH_TEST_ITERATIONS})")
+    return "patch"
+
+
+def _extract_errors(test_result: dict) -> list:
+    """Extrait toutes les erreurs ET warnings pour correction."""
+    errors = []
+
+    for detail in test_result.get("details", []):
+        tool   = detail.get("tool", "")
+        status = detail.get("status", "")
+        output = detail.get("output", "")
+
+        if status in ("FAILED", "WARNING") and output and not output.startswith("✅"):
+            errors.append(f"[{tool}] {output[:300]}")
+
+    return errors
+
+
 
 def compile_graph(orchestrator) -> StateGraph:
-    """
-    Compile le graphe LangGraph avec tous les nœuds d'agents.
-    """
-    # Créer le graphe
     workflow = StateGraph(RefactorState)
-    
-    # Ajouter un nœud pour chaque agent de refactoring
+
+    # Nœuds agents de refactoring
     for agent_name in orchestrator.get_refactoring_agents():
-        node_func = create_agent_node(orchestrator, agent_name)
-        workflow.add_node(agent_name, node_func)
-    
-    # Ajouter le nœud de fusion
+        workflow.add_node(agent_name, create_agent_node(orchestrator, agent_name))
+
+    # Nœud merge
     workflow.add_node("merge", merge_node)
-    
-    # Point d'entrée : premier agent sélectionné
+
+    # Nœuds patch/test
+    workflow.add_node("patch", patch_node)
+    workflow.add_node("test", test_node)
+
+    # ---- Entrée ----
     workflow.set_conditional_entry_point(
         route_to_next_agent,
-        {agent_name: agent_name for agent_name in orchestrator.get_refactoring_agents()}
+        {name: name for name in orchestrator.get_refactoring_agents()}
     )
-    
-    # Transitions conditionnelles entre agents
+
+    # ---- Transitions agents → merge ----
     for agent_name in orchestrator.get_refactoring_agents():
         workflow.add_conditional_edges(
             agent_name,
@@ -158,8 +250,18 @@ def compile_graph(orchestrator) -> StateGraph:
                 "merge": "merge"
             }
         )
-    
-    # Après la fusion, c'est terminé
-    workflow.add_edge("merge", END)
-    
+
+    # ---- merge → patch ----
+    workflow.add_edge("merge", "patch")
+
+    # ---- patch → test ----
+    workflow.add_edge("patch", "test")
+
+    # ---- test → patch ou END ----
+    workflow.add_conditional_edges(
+        "test",
+        route_patch_test,
+        {"patch": "patch", END: END}
+    )
+
     return workflow.compile()

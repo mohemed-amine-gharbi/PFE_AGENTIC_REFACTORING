@@ -40,11 +40,16 @@ class RefactorState(TypedDict):
     selected_agents: List[str]
     temperature_config: Any  # TemperatureConfig
     temperature_override: Dict[str, float]  # ⭐ Températures personnalisées
-    
+     
     # Options
     auto_patch: bool
     auto_test: bool
-    
+
+    # ⭐ NOUVEAU : boucle patch/test
+    patch_test_iteration: int        # compteur d'itérations (max 3)
+    patch_test_errors: List[str]     # erreurs du test précédent à corriger
+    patch_test_status: str           # "pending" | "passed" | "failed" | "max_reached"
+    _orchestrator: Any  # référence à LangGraphOrchestrator
     # Métriques
     metrics: Dict[str, Any]
     

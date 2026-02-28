@@ -137,37 +137,196 @@ class PatchAgent(BaseAgent):
             cleaned_code = "\n".join(final_lines)
 
         return cleaned_code
+    
+    def _validate_and_fix(self, code: str, language: str):
+        """Valide la syntaxe et retourne (code, is_valid)."""
+        if language.lower() != "python":
+            return code, True
 
-    def apply(self, code, language, temperature=None):
-        """Applique le nettoyage avec validation syntaxique"""
-        analysis = self.analyze(code, language)
+        try:
+            import ast
+            ast.parse(code)
+            self.changes_applied.append("Syntaxe Python validée ✅")
+            return code, True
+        except SyntaxError as e:
+            print(f"⚠️  Erreur de syntaxe après nettoyage : {e}")
+            self.changes_applied.append(f"Erreur de syntaxe détectée : {e}")
+            return code, False
+        
+    def _extract_from_markdown(self, code: str) -> str:
+        import re
+        match = re.search(r"```(?:\w+)?\n(.*?)```", code, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return code
+
+    def _strip_explanatory_lines(self, code: str, language: str) -> str:
+        lines = code.splitlines()
+        start = 0
+        for i, line in enumerate(lines):
+            if self._line_is_code(line.strip(), language):
+                start = i
+                break
+        end = len(lines)
+        for i in range(len(lines) - 1, start - 1, -1):
+            if lines[i].strip() and self._line_is_code(lines[i].strip(), language):
+                end = i + 1
+                break
+        return "\n".join(lines[start:end])
+    
+    def _apply_black(self, code: str) -> str:
+        """Applique Black directement sur le code — résultat garanti."""
+        try:
+            import black
+            formatted = black.format_str(code, mode=black.Mode())
+            self.changes_applied.append("Black appliqué ✅")
+            return formatted
+        except ImportError:
+            print("⚠️ Black non installé — pip install black")
+            return code
+        except black.InvalidInput as e:
+            print(f"⚠️ Black ne peut pas formater ce code : {e}")
+            return code
+
+
+    def _apply_ruff(self, code: str) -> str:
+        """Applique Ruff directement sur le code."""
+        try:
+            import tempfile, subprocess, os
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", delete=False, encoding="utf-8"
+            ) as f:
+                f.write(code)
+                tmp_path = f.name
+
+            subprocess.run(
+                ["ruff", "check", "--fix", tmp_path],
+                capture_output=True, check=False
+            )
+
+            with open(tmp_path, encoding="utf-8") as f:
+                fixed = f.read()
+
+            os.unlink(tmp_path)
+            self.changes_applied.append("Ruff appliqué ✅")
+            return fixed
+
+        except Exception as e:
+            print(f"⚠️ Ruff fix échoué : {e}")
+            return code
+
+    def apply(self, code, language, temperature=None, errors=None):
         self.changes_applied = []
+        analysis = self.analyze(code, language)
 
-        # Nettoyer le code (sans LLM pour éviter les erreurs)
-        cleaned_code = self.clean_code(code, language)
-        self.changes_applied.append("Texte explicatif et markdown supprimés")
-
-        # VALIDATION CRITIQUE : Vérifier la syntaxe Python
         if language.lower() == "python":
-            try:
-                import ast
-                ast.parse(cleaned_code)
-                self.changes_applied.append("Syntaxe Python validée")
-            except SyntaxError as e:
-                print(f"⚠️ Erreur de syntaxe après nettoyage: {e}")
-                lines = cleaned_code.splitlines()
-                valid_lines = []
-                for line in lines:
-                    stripped = line.strip()
-                    if stripped and not stripped.startswith("# "):
-                        valid_lines.append(line)
-                cleaned_code = "\n".join(valid_lines)
-                self.changes_applied.append(f"Erreur de syntaxe corrigée: {e}")
+            # ⭐ Toujours appliquer Black et Ruff directement (pas via LLM)
+            code = self._apply_ruff(code)   # Ruff en premier (corrige les imports etc.)
+            code = self._apply_black(code)  # Black en dernier (formatage final)
+
+        if errors:
+            # Filtrer les erreurs Black/Ruff qui sont déjà corrigées
+            remaining_errors = [
+                e for e in errors
+                if not any(t in e for t in ["black", "ruff"])
+            ]
+            if remaining_errors:
+                print(f"   🎯 Correction LLM ciblée : {len(remaining_errors)} erreur(s)...")
+                code = self._fix_with_llm(code, language, remaining_errors)
+            else:
+                print("   ✅ Uniquement des erreurs Black/Ruff — corrigées sans LLM")
+        else:
+            cleaned = self.clean_code(code, language)
+            code = cleaned
+            self.changes_applied.append("Nettoyage standard appliqué")
+
+        code, syntax_ok = self._validate_and_fix(code, language)
+
+        if not syntax_ok:
+            self.changes_applied.append("⚠️ Fallback sur code précédent")
 
         return {
             "name": self.name,
             "analysis": analysis,
-            "proposal": cleaned_code,
+            "proposal": code,
             "changes_applied": self.changes_applied,
-            "temperature_used": temperature if temperature is not None else "N/A"
+            "temperature_used": temperature if temperature is not None else "N/A",
+            "status": "SUCCESS" if syntax_ok else "WARNING",
         }
+        
+
+    def _fix_with_llm(self, code: str, language: str, errors: list) -> str:
+        """Corrige le code en ciblant les erreurs ET warnings remontés par le TestAgent."""
+        if not hasattr(self.llm, 'ask'):
+            return code
+
+        # Séparer erreurs bloquantes et warnings de style
+        blocking = [e for e in errors if any(t in e for t in ["python_syntax", "mypy"])]
+        style    = [e for e in errors if any(t in e for t in ["black", "ruff"])]
+        other    = [e for e in errors if e not in blocking and e not in style]
+
+        sections = []
+
+        if blocking:
+            sections.append(
+                "ERREURS BLOQUANTES À CORRIGER EN PRIORITÉ (syntaxe, types) :\n"
+                + "\n".join(f"  - {e}" for e in blocking[:5])
+            )
+
+        if style:
+            sections.append(
+                "PROBLÈMES DE STYLE À CORRIGER (formatage Black, règles Ruff) :\n"
+                + "\n".join(f"  - {e}" for e in style[:5])
+                + "\n  → Appliquez le formatage Black standard : 88 chars/ligne, "
+                "double quotes, espaces autour des opérateurs, ligne vide entre fonctions."
+            )
+
+        if other:
+            sections.append(
+                "AUTRES PROBLÈMES :\n"
+                + "\n".join(f"  - {e}" for e in other[:3])
+            )
+
+        errors_str = "\n\n".join(sections)
+
+        prompt = f"""INSTRUCTIONS STRICTES :
+    1. Retournez UNIQUEMENT du code {language} corrigé
+    2. AUCUN texte explicatif, AUCUN markdown, AUCUN commentaire
+    3. Corrigez TOUTES les erreurs et warnings listés ci-dessous
+    4. Pour les problèmes Black : respectez strictement PEP8
+    - Longueur max 88 caractères par ligne
+    - Double quotes pour les strings
+    - 2 lignes vides entre les fonctions/classes
+    - 1 ligne vide entre les méthodes
+    - Espaces autour des opérateurs (=, +, -, etc.)
+    - Pas d'espaces superflus
+
+    PROBLÈMES À CORRIGER :
+    {errors_str}
+
+    CODE À CORRIGER :
+    {code}
+
+    RETOURNEZ UNIQUEMENT LE CODE CORRIGÉ :"""
+
+        try:
+            result = self.llm.ask(
+                system_prompt=(
+                    f"Tu es un expert en code {language} et formatage PEP8/Black. "
+                    "Retourne UNIQUEMENT du code propre et bien formaté. "
+                    "Zéro explication, zéro markdown."
+                ),
+                user_prompt=prompt,
+                temperature=0.05,
+            )
+            cleaned = self._extract_from_markdown(result)
+            cleaned = self._strip_explanatory_lines(cleaned, language)
+            self.changes_applied.append(
+                f"Correction LLM : {len(blocking)} erreur(s) bloquante(s), "
+                f"{len(style)} warning(s) de style"
+            )
+            return cleaned
+
+        except Exception as e:
+            print(f"⚠️ LLM correction échouée : {e}")
+            return code
